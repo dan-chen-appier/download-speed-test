@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sequential download benchmark</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #222; }
+  h1 { font-size: 1.2rem; }
+  code { background: #f2f2f2; padding: 2px 4px; border-radius: 3px; word-break: break-all; }
+  label { margin-right: 1rem; }
+  button { padding: 6px 16px; font-size: 1rem; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  table { border-collapse: collapse; margin-top: 1rem; }
+  th, td { border: 1px solid #ccc; padding: 4px 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: #f7f7f7; }
+  td.status-err { color: #c00; text-align: left; }
+  #summary { margin-top: 1rem; font-weight: 600; white-space: pre-line; }
+</style>
+</head>
+<body>
+
+<h1>Sequential download benchmark</h1>
+<p>
+  <label>URL: <input type="url" id="url" placeholder="https://example.com/path/to/file.js" style="width:40em"></label>
+</p>
+
+<p>
+  <label>Runs: <input type="number" id="runs" value="10" min="1" style="width:4em"></label>
+  <label><input type="checkbox" id="fresh-rev"> fresh <code>rev</code> per request (bust CDN cache)</label>
+  <button id="start">Start</button>
+</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Status</th><th>Bytes</th><th>Time (ms)</th></tr>
+  </thead>
+  <tbody id="results"></tbody>
+</table>
+
+<div id="summary"></div>
+
+<script>
+const startBtn = document.getElementById('start');
+const tbody = document.getElementById('results');
+const summaryEl = document.getElementById('summary');
+
+function buildUrl() {
+  const base = document.getElementById('url').value.trim();
+  if (!document.getElementById('fresh-rev').checked) return base;
+  const u = new URL(base);
+  u.searchParams.set('rev', `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  return u.toString();
+}
+
+async function downloadOnce() {
+  const t0 = performance.now();
+  // cache: 'no-store' bypasses the browser HTTP cache; CDN edge cache still applies
+  // unless "fresh rev" is checked. arrayBuffer() ensures the full body is downloaded.
+  const res = await fetch(buildUrl(), { cache: 'no-store' });
+  const body = await res.arrayBuffer();
+  const t1 = performance.now();
+  return { status: res.status, bytes: body.byteLength, ms: t1 - t0 };
+}
+
+function addRow(i, status, bytes, ms) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${i}</td><td>${status}</td><td>${bytes}</td><td>${ms}</td>`;
+  tbody.appendChild(tr);
+  return tr;
+}
+
+startBtn.addEventListener('click', async () => {
+  if (!document.getElementById('url').value.trim()) {
+    alert('Please enter a URL');
+    return;
+  }
+  const runs = Math.max(1, parseInt(document.getElementById('runs').value, 10) || 10);
+  startBtn.disabled = true;
+  tbody.innerHTML = '';
+  summaryEl.textContent = '';
+  const times = [];
+
+  for (let i = 1; i <= runs; i++) {
+    try {
+      const { status, bytes, ms } = await downloadOnce();
+      times.push(ms);
+      addRow(i, status, bytes.toLocaleString(), ms.toFixed(1));
+    } catch (err) {
+      const tr = addRow(i, '', '-', '-');
+      tr.children[1].textContent = `error: ${err.message}`;
+      tr.children[1].className = 'status-err';
+    }
+  }
+
+  if (times.length) {
+    const sorted = [...times].sort((a, b) => a - b);
+    const sum = times.reduce((a, b) => a + b, 0);
+    const median = sorted.length % 2
+      ? sorted[(sorted.length - 1) / 2]
+      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+    summaryEl.textContent =
+      `ok: ${times.length}/${runs}\n` +
+      `min: ${sorted[0].toFixed(1)} ms  median: ${median.toFixed(1)} ms  ` +
+      `avg: ${(sum / times.length).toFixed(1)} ms  max: ${sorted[sorted.length - 1].toFixed(1)} ms  ` +
+      `total: ${sum.toFixed(1)} ms`;
+  }
+  startBtn.disabled = false;
+});
+</script>
+
+</body>
+</html>
